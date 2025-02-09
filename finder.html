@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EV Charging Finder 🚗⚡</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+      body,
+      html {
+        margin: 0;
+        padding-top:-1rem;
+        padding: 0.8rem;
+        font-family: Arial, sans-serif;
+        transition: background-color 0.3s, color 0.3s;
+      }
+      body.dark-mode {
+        background-color: #1D2428;
+        color: #ffffff;
+      }
+
+      #map {
+        height: 65vh;
+        width: 100%;
+      }
+
+      #search-container {
+        padding: 10px;
+        text-align: center;
+        position: relative;
+      }
+
+      input {
+        width: 60%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        margin-bottom: 10px;
+      }
+
+      button {
+        padding: 8px 16px;
+        cursor: pointer;
+        border: none;
+        border-radius: 4px;
+        margin: 5px;
+      }
+
+      button:hover {
+        background-color: #ddd;
+      }
+
+      #suggestions {
+        position: absolute;
+        background: white;
+        width: 60%;
+        left: 20%;
+        border: 1px solid #ccc;
+        max-height: 150px;
+        overflow-y: auto;
+        display: none;
+        z-index: 1000;
+      }
+
+      .suggestion {
+        padding: 8px;
+        cursor: pointer;
+      }
+
+      .suggestion:hover {
+        background: #f0f0f0;
+      }
+
+      #station-list {
+        margin-top: 20px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+
+      .station-item {
+        color:white !important;
+        padding: 10px;
+        border-bottom: 1px solid #ccc;
+      }
+
+      .station-item:last-child {
+        border-bottom: none;
+      }
+
+      /* Dark Mode specific styles */
+      body.dark-mode button {
+        background-color:#5794753b;
+        color: white;
+        
+      }
+      body.dark-mode input {
+        background-color: #333;
+        color: white;
+        border: 1px solid #555;
+      }
+      body.dark-mode #suggestions {
+        background-color:#6edfa6a8;
+        color: white;
+      }
+
+      #dark-mode-toggle {
+        background-color: #f1f1f1;
+        color: #000;
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+        border: 1px solid #ccc;
+        border-radius: 50%;
+        
+      }
+      #dark-mode-toggle{
+        display: none;
+      }
+
+      body.dark-mode #dark-mode-toggle {
+        background-color: #444;
+        color: #fff;
+      }
+      .searchloc::placeholder{
+     color: white;
+     font-weight: 500;
+     font-size:0.9rem;
+     font-family: cursive;
+      }
+
+      .found{
+        width:100%;
+        
+      }
+    </style>
+  </head>
+  <body>
+    <div id="search-container">
+      <input class="searchloc" style="margin-left: -1.05rem; border-color: transparent; background-color: #5794753b; width:10rem;"
+        type="text"
+        id="search-input" 
+        placeholder="Search here....."
+        oninput="fetchLocationSuggestions()"
+      />
+      <div id="suggestions"></div>
+      <button onclick="searchForLocation()"><i class="fa-solid fa-magnifying-glass" style="color: #41c284;" ></i></button>
+      <button onclick="findMyLocation()">📍Place</button>
+    </div>
+
+    <div id="map"></div>
+    
+    <div id="station-list"></div>
+
+    <!-- Dark Mode Toggle Button -->
+    <button id="dark-mode-toggle" onclick="toggleDarkMode()">🌙</button>
+ 
+ </div>
+    <script>
+      var map = L.map("map").setView([22.7196, 75.8577], 12);
+      var userMarker;
+      var routePlanner;
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map);
+
+      function fetchLocationSuggestions() {
+        let query = document.getElementById("search-input").value;
+        if (query.length < 3) {
+          document.getElementById("suggestions").style.display = "none";
+          return;
+        }
+
+        let url = `https://nominatim.openstreetmap.org/search?format=json&q=${query}`;
+
+        fetch(url)
+          .then((response) => response.json())
+          .then((data) => {
+            let suggestionsBox = document.getElementById("suggestions");
+            suggestionsBox.innerHTML = "";
+            if (data.length === 0) {
+              suggestionsBox.style.display = "none";
+              return;
+            }
+
+            data.forEach((location) => {
+              let div = document.createElement("div");
+              div.className = "suggestion";
+              div.textContent = location.display_name;
+              div.onclick = function () {
+                document.getElementById("search-input").value =
+                  location.display_name;
+                suggestionsBox.style.display = "none";
+                searchForLocation(location.lat, location.lon);
+              };
+              suggestionsBox.appendChild(div);
+            });
+
+            suggestionsBox.style.display = "block";
+          })
+          .catch((error) =>
+            console.error("Error fetching location suggestions:", error)
+          );
+      }
+
+      function searchForLocation(lat = null, lon = null) {
+        let locationQuery = document.getElementById("search-input").value;
+
+        if (locationQuery.toLowerCase().includes("indore")) {
+          showSampleChargingStations();
+        } else {
+          if (!lat || !lon) {
+            let geoUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${locationQuery}`;
+            fetch(geoUrl)
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.length > 0) {
+                  lat = data[0].lat;
+                  lon = data[0].lon;
+                  map.setView([lat, lon], 12);
+                  fetchNearbyChargingStations(lat, lon);
+                } else {
+                  alert("Location not found!");
+                }
+              });
+          } else {
+            map.setView([lat, lon], 12);
+            fetchNearbyChargingStations(lat, lon);
+          }
+        }
+      }
+
+      function fetchNearbyChargingStations(lat, lon) {
+        const apiURL = `https://api.openchargemap.io/v3/poi/?output=json&latitude=${lat}&longitude=${lon}&maxresults=5&key=1856abf2-0066-402c-bce2-f75bae6a4ac3`;
+
+        fetch(apiURL)
+          .then((response) => response.json())
+          .then((data) => {
+            map.eachLayer((layer) => {
+              if (layer instanceof L.Marker && layer !== userMarker) {
+                map.removeLayer(layer);
+              }
+            });
+
+            let stationListHTML = '';
+            data.forEach((station) => {
+              if (station.AddressInfo) {
+                let marker = L.marker([station.AddressInfo.Latitude, station.AddressInfo.Longitude])
+                  .addTo(map)
+                  .bindPopup(
+                    `<strong>${station.AddressInfo.Title}</strong><br>
+                        ${station.AddressInfo.AddressLine1}<br>
+                        <em>Power Type:</em> ${
+                          station.Connections
+                            ? station.Connections[0].ConnectionType.Title
+                            : "Unknown"
+                        }`
+                  );
+
+                marker.on("mouseover", function () {
+                  this.openPopup();
+                });
+
+                marker.on("mouseout", function () {
+                  this.closePopup();
+                });
+
+                // When clicked, show the directions
+                marker.on("click", function () {
+                  navigateTo(station.AddressInfo.Latitude, station.AddressInfo.Longitude);
+                });
+
+                // Add station to the list
+                stationListHTML += `
+                  <div class="station-item">
+                    <strong>${station.AddressInfo.Title}</strong><br>
+                    ${station.AddressInfo.AddressLine1}<br>
+                    <em>Power Type:</em> ${
+                      station.Connections
+                        ? station.Connections[0].ConnectionType.Title
+                        : "Unknown"
+                    }
+                  </div>
+                `;
+              }
+            });
+
+            document.getElementById('station-list').innerHTML = stationListHTML;
+          })
+          .catch((error) =>
+            console.error("Error fetching charging stations:", error)
+          );
+      }
+
+      function showSampleChargingStations() {
+        map.eachLayer((layer) => {
+          if (layer instanceof L.Marker && layer !== userMarker) {
+            map.removeLayer(layer);
+          }
+        });
+
+        let sampleStations = [
+          {
+            lat: 22.7196,
+            lon: 75.8577,
+            name: "GreenCharge Station",
+            power: "Fast AC Charger",
+            address: "Near MG Road, Indore",
+          },
+          {
+            lat: 22.7256,
+            lon: 75.8657,
+            name: "EcoVolt Charging Hub",
+            power: "DC Fast Charger",
+            address: "Palasia, Indore",
+          },
+          {
+            lat: 22.71,
+            lon: 75.85,
+            name: "ChargeX Express",
+            power: "Standard AC Charger",
+            address: "Bhawarkuan Road, Indore",
+          },
+        ];
+
+        let stationListHTML = '';
+        sampleStations.forEach((station) => {
+          let marker = L.marker([station.lat, station.lon])
+            .addTo(map)
+            .bindPopup(
+              `<strong>${station.name}</strong><br>
+                        <em>Power Type:</em> ${station.power}<br>
+                        ${station.address}`
+            );
+
+          marker.on("click", function () {
+            navigateTo(station.lat, station.lon);
+          });
+
+          stationListHTML += `
+            <div class="station-item">
+              
+              <strong>${station.name}</strong><br>
+              ${station.address}<br>
+              <em>Power Type:</em> ${station.power}
+            </div>
+          `;
+        });
+
+        document.getElementById('station-list').innerHTML = stationListHTML;
+      }
+
+      function navigateTo(lat, lon) {
+        if (userMarker) {
+          if (routePlanner) {
+            map.removeControl(routePlanner);
+          }
+
+          routePlanner = L.Routing.control({
+            waypoints: [
+              L.latLng(userMarker.getLatLng().lat, userMarker.getLatLng().lng),
+              L.latLng(lat, lon),
+            ],
+            routeWhileDragging: true,
+          }).addTo(map);
+        } else {
+          alert("Please allow location access first.");
+        }
+      }
+
+      function findMyLocation() {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(function (position) {
+            var lat = position.coords.latitude;
+            var lon = position.coords.longitude;
+
+            map.setView([lat, lon], 13);
+            if (userMarker) {
+              map.removeLayer(userMarker);
+            }
+            userMarker = L.marker([lat, lon]).addTo(map).bindPopup("You are here").openPopup();
+            searchForLocation(lat, lon);
+          });
+        } else {
+          alert("Geolocation is not supported by this browser.");
+        }
+      }
+
+      function toggleDarkMode() {
+        document.body.classList.toggle("dark-mode");
+      }
+    </script>
+  </body>
+</html>
